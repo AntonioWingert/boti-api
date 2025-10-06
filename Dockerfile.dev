@@ -12,13 +12,16 @@ COPY package*.json ./
 
 # Limpar cache do npm e instalar dependências
 RUN npm cache clean --force
-RUN npm install --legacy-peer-deps --no-cache
+RUN npm install --legacy-peer-deps
 
 # Verificar se as dependências foram instaladas corretamente
 RUN npm list @aws-sdk/s3-request-presigner @types/multer multer
 
 # Copiar schema do Prisma
 COPY prisma ./prisma
+
+# Copiar todo o código (inclui tsconfig.json, nest-cli.json e src/)
+COPY . .
 
 # Gerar cliente Prisma
 RUN npx prisma generate
