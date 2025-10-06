@@ -1,0 +1,544 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  phone       String?
+  address     String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Sistema de Planos
+  planType        PlanType     @default(FREE_TRIAL)
+  trialStartDate  DateTime?
+  trialEndDate    DateTime?
+  isTrialActive   Boolean      @default(false)
+  trialUsed       Boolean      @default(false)
+  
+  // Limites de recursos
+  maxUsers        Int          @default(2)  // 1 SUPERVISOR + 1 AGENT (trial)
+  maxConnections  Int          @default(1)
+  maxChatbots     Int          @default(1)
+  maxDisparos     Int          @default(5000)  // Disparos por mês
+  maxDisparosDiarios Int       @default(200)   // Disparos por dia
+  maxClients      Int          @default(2000)
+  
+  // Controle de uso atual
+  currentUsers        Int     @default(0)
+  currentConnections  Int     @default(0)
+  currentChatbots     Int     @default(0)
+  currentDisparos     Int     @default(0)
+  currentDisparosDiarios Int  @default(0)
+  currentClients      Int     @default(0)
+  lastDisparoReset    DateTime @default(now())
+  
+  // Recursos Premium
+  hasAdvancedAnalytics Boolean @default(false)
+  hasCustomBranding   Boolean @default(false)
+  hasSSO             Boolean @default(false)
+  hasAPI             Boolean @default(false)
+  
+  // Billing
+  monthlyPrice        Decimal @default(0.00)
+  billingCycle        BillingCycle @default(MONTHLY)
+  nextBilling         DateTime?
+  isActive            Boolean @default(true)
+
+  // Relationships
+  clients     Client[]
+  chatbots    Chatbot[]
+  users       User[]
+  conversations Conversation[]
+  whatsappSessions WhatsAppSession[]
+  messages    Message[]
+  disparos    Disparo[]
+  notifications Notification[]
+
+  @@map("companies")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(AGENT)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+model Client {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  phone     String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relationships
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  conversations Conversation[]
+  messages  Message[]
+
+  @@map("clients")
+}
+
+model Chatbot {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  autoEndMessage String? // Mensagem automática de finalização enviada pela cron
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  flows     Flow[]    // Fluxos do chatbot
+  conversations Conversation[]
+  whatsappSessions WhatsAppSession[] // Conexões WhatsApp vinculadas
+
+  @@map("chatbots")
+}
+
+model Flow {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  isDefault   Boolean  @default(false)  // Fluxo padrão da empresa
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  chatbotId String
+  chatbot   Chatbot   @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  nodes     FlowNode[] // Nós do fluxo
+  conversations Conversation[]
+
+  @@map("flows")
+}
+
+model FlowNode {
+  id          String   @id @default(cuid())
+  title       String   // Título do nó
+  message     String   // Mensagem exibida ao usuário
+  nodeType    NodeType @default(OPTION)  // Tipo do nó
+  position    Json     // Posição no mapa mental (x, y)
+  isStart     Boolean  @default(false)   // Nó inicial do fluxo
+  isEnd       Boolean  @default(false)   // Nó final do fluxo
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  flowId     String
+  flow       Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  options    FlowOption[] // Opções deste nó
+  targetOptions FlowOption[] @relation("FlowOptionTarget") // Opções que apontam para este nó
+  incomingConnections FlowConnection[] @relation("FlowConnectionTarget")
+  outgoingConnections FlowConnection[] @relation("FlowConnectionSource")
+  conversations Conversation[]
+
+  @@map("flow_nodes")
+}
+
+model FlowOption {
+  id              String   @id @default(cuid())
+  text            String   // Texto da opção
+  order           Int      // Ordem de exibição
+  actionType      String   @default("message") // Tipo de ação: message, end, transfer, wait, return
+  targetNodeId    String?  // ID do nó de destino direto (para actionType = "message" ou "return")
+  transferMessage String?  // Mensagem de transferência (para actionType = "transfer")
+  waitTime        Int?     // Tempo de espera em segundos (para actionType = "wait")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relationships
+  nodeId     String
+  node       FlowNode @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+  targetNode FlowNode? @relation("FlowOptionTarget", fields: [targetNodeId], references: [id], onDelete: SetNull)
+  connection FlowConnection? // Conexão para o próximo nó
+
+  @@map("flow_options")
+}
+
+model FlowConnection {
+  id          String   @id @default(cuid())
+  condition   String?  // Condição para seguir esta conexão (opcional)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  sourceNodeId String
+  sourceNode   FlowNode @relation("FlowConnectionSource", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNodeId String
+  targetNode   FlowNode @relation("FlowConnectionTarget", fields: [targetNodeId], references: [id], onDelete: Cascade)
+  optionId     String?  @unique // Opção que leva a esta conexão
+  option       FlowOption? @relation(fields: [optionId], references: [id], onDelete: SetNull)
+
+  @@map("flow_connections")
+}
+
+model WhatsAppSession {
+  id          String        @id @default(cuid())
+  sessionName String        // Nome da sessão (ex: "empresa-123")
+  phoneNumber String?       // Número do WhatsApp conectado
+  status      SessionStatus @default(DISCONNECTED)
+  qrCode      String?       @db.Text // QR Code para conexão (TEXT para suportar QR codes longos)
+  lastSeen    DateTime?     // Última vez que foi visto online
+  error       String?       // Mensagem de erro se houver
+  active      Boolean       @default(true)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relationships
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  chatbotId String?
+  chatbot   Chatbot? @relation(fields: [chatbotId], references: [id], onDelete: SetNull)
+
+  @@map("whatsapp_sessions")
+}
+
+model Conversation {
+  id          String      @id @default(cuid())
+  status      ConversationStatus @default(ACTIVE)
+  priority    Priority    @default(NORMAL)
+  escalated   Boolean     @default(false)
+  escalationReason String?  // Motivo da escalação
+  lastMessage String?     // Última mensagem trocada (cache)
+  lastMessageAt DateTime? // Timestamp da última mensagem
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  finishedAt  DateTime?
+
+  // Fluxo de decisão
+  currentFlowId String?   // Fluxo atual da conversa
+  currentFlow   Flow?     @relation(fields: [currentFlowId], references: [id], onDelete: SetNull)
+  currentNodeId String?   // Nó atual no fluxo
+  currentNode   FlowNode? @relation(fields: [currentNodeId], references: [id], onDelete: SetNull)
+  flowHistory   Json?     // Histórico de navegação no fluxo
+
+  // Relationships
+  companyId   String
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  clientId    String
+  client      Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  chatbotId   String?
+  chatbot     Chatbot?    @relation(fields: [chatbotId], references: [id], onDelete: SetNull)
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  
+  // Mensagens da conversa
+  messages    Message[]
+  summary     ConversationSummary?
+
+  @@map("conversations")
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  content        String      // Conteúdo da mensagem
+  sender         MessageSender @default(CLIENT) // Quem enviou
+  messageType    MessageType @default(TEXT) // Tipo da mensagem
+  metadata       Json?       // Metadados adicionais (arquivos, localização, etc)
+  isRead         Boolean     @default(false) // Se foi lida
+  isDelivered    Boolean     @default(false) // Se foi entregue
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  
+  // Estratégia de arquivamento
+  storageTier    StorageTier @default(HOT) // Camada de armazenamento
+  archivedAt     DateTime?   // Quando foi arquivada
+  archivedPath   String?     // Caminho no armazenamento frio
+  
+  // Relationships
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  clientId       String
+  client         Client      @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  companyId      String
+  company        Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("messages")
+  @@index([conversationId, createdAt])
+  @@index([clientId, createdAt])
+  @@index([companyId, createdAt])
+  @@index([storageTier, createdAt])
+}
+
+model ConversationSummary {
+  id             String      @id @default(cuid())
+  conversationId String      @unique
+  summary        String      // Resumo da conversa
+  keyPoints      Json?       // Pontos-chave extraídos
+  sentiment      String?     // Sentimento geral (positivo, negativo, neutro)
+  tags           Json        // Tags para categorização (array JSON)
+  messageCount   Int         // Número total de mensagens
+  duration       Int?        // Duração em minutos
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  // Relationships
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("conversation_summaries")
+}
+
+
+// Novos modelos para disparos
+model Disparo {
+  id            String   @id @default(cuid())
+  title         String
+  message       String
+  type          DisparoTipo
+  status        DisparoStatus @default(AGENDADO)
+  scheduledFor  DateTime
+  sentAt        DateTime?
+  totalSent     Int      @default(0)
+  totalError    Int      @default(0)
+  sendInterval  Int      @default(5) // segundos entre envios
+  
+  // Relationships
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  recipients    DisparoDestinatario[]
+  attachments   DisparoAnexo[]
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@map("disparos")
+}
+
+model DisparoDestinatario {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String
+  status    DestinatarioStatus @default(PENDENTE)
+  sentAt    DateTime?
+  error     String?
+  
+  // Relationships
+  disparoId String
+  disparo   Disparo @relation(fields: [disparoId], references: [id], onDelete: Cascade)
+  
+  @@map("disparo_destinatarios")
+}
+
+model DisparoAnexo {
+  id        String   @id @default(cuid())
+  name      String
+  type      String   // MIME type
+  size      Int      // em bytes
+  url       String   // URL do arquivo
+  isImage   Boolean  @default(false)
+  
+  // Relationships
+  disparoId String
+  disparo   Disparo  @relation(fields: [disparoId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("disparo_anexos")
+}
+
+model PendingUser {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  password      String
+  companyName   String
+  companyEmail  String
+  companyPhone  String?
+  companyAddress String?
+  message       String?
+  status        PendingUserStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  @@map("pending_users")
+}
+
+// Enums
+enum Role {
+  ADMIN
+  AGENT
+  SUPERVISOR
+}
+
+enum PlanType {
+  FREE_TRIAL    // 7 dias, 1 SUPERVISOR + 1 AGENT, 1 chatbot, 1 conexão
+  FREE          // Permanente, 1 usuário, 1 chatbot, 1 conexão
+  STARTER       // 1 SUPERVISOR + 2 AGENTS, 1 chatbot, 1 conexão, 5k disparos
+  PROFESSIONAL  // 2 SUPERVISORS + 8 AGENTS, 5 chatbots, 3 conexões, 25k disparos + Premium
+  ENTERPRISE    // Customizado, recursos ilimitados
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum DisparoTipo {
+  PROMOCIONAL    // Campanhas promocionais
+  LEMBRETE       // Lembretes automáticos
+  FOLLOWUP       // Follow-up de vendas
+  NEWSLETTER     // Newsletter
+  PERSONALIZADO  // Mensagem personalizada
+}
+
+enum DisparoStatus {
+  AGENDADO       // Agendado para envio
+  ENVIANDO       // Enviando no momento
+  CONCLUIDO      // Envio concluído
+  CANCELADO      // Cancelado
+  ERRO           // Erro no envio
+}
+
+enum DestinatarioStatus {
+  PENDENTE       // Aguardando envio
+  ENVIADO        // Enviado com sucesso
+  ERRO           // Erro no envio
+  BLOQUEADO      // Número bloqueado
+}
+
+enum PendingUserStatus {
+  PENDING        // Aguardando aprovação
+  APPROVED       // Aprovado
+  REJECTED       // Rejeitado
+}
+
+enum ConversationStatus {
+  ACTIVE
+  PAUSED
+  FINISHED
+  ESCALATED
+}
+
+enum Priority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum NodeType {
+  OPTION      // Nó com opções de escolha
+  MESSAGE     // Nó apenas com mensagem
+  INPUT       // Nó que solicita entrada do usuário
+  CONDITION   // Nó de condição lógica
+  ACTION      // Nó que executa uma ação
+  ESCALATION  // Nó de escalação para humano
+}
+
+enum SessionStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  QR_CODE
+  ERROR
+}
+
+enum MessageSender {
+  CLIENT
+  SYSTEM
+  AGENT
+  CHATBOT
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  AUDIO
+  VIDEO
+  DOCUMENT
+  LOCATION
+  CONTACT
+  STICKER
+}
+
+enum StorageTier {
+  HOT      // Últimas 24h - MySQL principal
+  WARM     // Últimos 30 dias - MySQL com compressão
+  COLD     // Histórico - S3/FileSystem
+}
+
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String?  // Se null, notificação para todos os usuários da empresa
+  companyId   String?  // Se null, notificação global
+  type        NotificationType
+  title       String
+  message     String
+  data        Json?    // Dados adicionais da notificação
+  priority    NotificationPriority @default(MEDIUM)
+  targetRole  NotificationTargetRole?
+  read        Boolean  @default(false)
+  readAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([companyId, read])
+  @@index([type, createdAt])
+}
+
+enum NotificationType {
+  CONNECTION_LOST           // Conexão WhatsApp perdida
+  CONNECTION_RESTORED       // Conexão WhatsApp restaurada
+  NEW_REGISTRATION_REQUEST  // Nova solicitação de registro
+  BOT_UPDATED              // Chatbot atualizado
+  SUGGESTION_ACCEPTED      // Sugestão aceita
+  SYSTEM_ALERT             // Alerta do sistema
+  DISPARO_COMPLETED        // Disparo em massa concluído
+  DISPARO_FAILED           // Disparo em massa falhou
+  USER_JOINED              // Novo usuário adicionado
+  USER_LEFT                // Usuário removido
+}
+
+enum NotificationPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum NotificationTargetRole {
+  ADMIN
+  USER
+  ALL
+}
+

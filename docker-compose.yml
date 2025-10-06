@@ -1,0 +1,50 @@
+services:
+  # Banco de dados MySQL
+  mysql:
+    image: mysql:8.0
+    container_name: chatbot-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: password
+      MYSQL_DATABASE: chatbot_api
+      MYSQL_USER: chatbot_user
+      MYSQL_PASSWORD: chatbot_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - chatbot-network
+
+  # Aplicação NestJS (Desenvolvimento)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: chatbot-api
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - mysql
+    networks:
+      - chatbot-network
+    volumes:
+      - ./src:/app/src
+      - ./prisma:/app/prisma
+      - ./package.json:/app/package.json
+      - ./tsconfig.json:/app/tsconfig.json
+      - ./nest-cli.json:/app/nest-cli.json
+      - ./tsconfig.build.json:/app/tsconfig.build.json
+      - ./sessions:/app/sessions
+      - /app/node_modules  
+
+volumes:
+  mysql_data:
+
+networks:
+  chatbot-network:
+    driver: bridge
