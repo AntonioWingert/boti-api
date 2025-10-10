@@ -29,7 +29,7 @@
     # ----------------------------
     FROM node:20-alpine AS runner
     
-    # Instalar apenas o necessário (OpenSSL para Prisma Client)
+    # Instalar dependências do sistema mínimas (OpenSSL necessário para Prisma Client)
     RUN apk add --no-cache openssl
     
     # Definir diretório de trabalho
@@ -41,9 +41,12 @@
     # Instalar apenas dependências de produção
     RUN npm install --omit=dev --legacy-peer-deps --no-audit --no-fund && npm cache clean --force
     
-    # Copiar build compilado e arquivos necessários do builder
+    # Copiar o código compilado e o Prisma Client gerado
     COPY --from=builder /app/dist ./dist
     COPY --from=builder /app/prisma ./prisma
+    # 🔥 IMPORTANTE: copiar também o Prisma Client gerado no node_modules
+    COPY --from=builder /app/node_modules/.prisma /app/node_modules/.prisma
+    COPY --from=builder /app/node_modules/@prisma /app/node_modules/@prisma
     
     # Variáveis de ambiente
     ENV NODE_ENV=production
