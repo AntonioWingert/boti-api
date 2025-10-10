@@ -25,8 +25,15 @@ async function bootstrap() {
   // Enable global exception filter
   app.useGlobalFilters(new HttpExceptionFilter());
 
-  // Enable CORS
-  app.enableCors();
+  // Enable CORS with specific configuration
+  app.enableCors({
+    origin: process.env.FRONTEND_URL 
+      ? [process.env.FRONTEND_URL, 'http://localhost:3000', 'http://localhost:3001']
+      : ['http://localhost:3000', 'http://localhost:3001'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    credentials: true,
+  });
 
   await app.listen(process.env.PORT ?? 3000);
 }
